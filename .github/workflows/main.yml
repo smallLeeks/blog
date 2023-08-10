@@ -1,29 +1,96 @@
+# Sample workflow for building and deploying an Astro site to GitHub Pages
+#
+# To get started with Astro see: https://docs.astro.build/en/getting-started/
+#
+name: Deploy Astro site to Pages
 
-name: CI
-
-# Controls when the workflow will run
 on:
-  # Triggers the workflow on push or pull request events but only for the main branch
+  # Runs on pushes targeting the default branch
   push:
-    branches: [ main ]
-  pull_request:
-    branches: [ main ]
-  schedule:
-    - cron: 30 */4 * * *
+    branches: ["main"]
 
   # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
-# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+# Sets permissions of the GITHUB_TOKEN to allow deployment to GitHub Pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Allow only one concurrent deployment, skipping runs queued between the run in-progress and latest queued.
+# However, do NOT cancel in-progress runs as we want to allow these production deployments to complete.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
 jobs:
-  publish-drafts:
+  build:
+    name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - name: SSG Publish Drafts
-        # You may pin to the exact commit or the version.
-        uses: one-aalam/github-action-astro-publish-drafts@v0.1-beta
+      - name: Checkout
+        uses: actions/checkout@v3
         with:
-          github_token: $\{{ secrets.GITHUB_TOKEN }}
-          github_actor: one-aalam
-          github_repository: one-aalam/astro-ink
+          submodules: true
+      # https://github.com/actions/checkout/issues/417#issuecomment-1640448307
+      - name: Update submodules from origin master
+        env:
+            PAT: ${{ secrets.PAT }}
+        run: |
+            git submodule foreach --recursive git checkout master
+            git submodule foreach --recursive git pull origin master
+      - name: Remove obsidion directories
+        run:
+            rm -rf src/content/blog/{_github,_obsidian,_cedict_ts.u8,.obsidian,.github,.gitignore,renovate.json,cedict_ts.u8}
+      - name: Setup pnpm
+        # You may pin to the exact commit or the version.
+        # uses: pnpm/action-setup@c3b53f6a16e57305370b4ae5a540c2077a1d50dd
+        uses: pnpm/action-setup@v2.2.4
+        with:
+            run_install: false
+            version: 8
+      - name: Setup Node
+        uses: actions/setup-node@v3
+        with:
+          node-version-file: "package.json"
+          cache: "pnpm"
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: |
+            echo "STORE_PATH=$(pnpm store path)" >> $GITHUB_OUTPUT
+      - uses: actions/cache@v3
+        name: Setup pnpm cache
+        with:
+            path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+            key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+            restore-keys: |
+                ${{ runner.os }}-pnpm-store-
+
+      - name: Install dependencies
+        run: pnpm i
+      - name: Setup Pages
+        id: pages
+        uses: actions/configure-pages@v3
+      - name: Build with Astro
+        run: |
+          pnpm build \
+            --site "${{ steps.pages.outputs.origin }}" \
+            --base "${{ steps.pages.outputs.base_path }}"
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v1
+        with:
+          path: "./dist"
+  deploy:
+    environment:
+        name: github-pages
+        url: ${{ steps.deployment.outputs.page_url }}
+    needs: build
+    runs-on: ubuntu-latest
+    name: Deploy
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v2
